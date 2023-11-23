@@ -31,6 +31,24 @@ export function addTrade(trade) {
 }
 
 /**
+ * Add a new trade to the store.
+ * @param {string} tradeID
+ */
+export function removeTrade(tradeID) {
+    tradesStore.update(current => current.filter(t => t.id !== tradeID));
+}
+
+
+/**
+ * Add a new trade to the store.
+ * @param {string} tradeID
+ * @param {Trade} trade
+ */
+export function updateTrade(tradeID, trade) {
+    tradesStore.update(current => current.map(t => t.id === tradeID ? trade : t));
+}
+
+/**
  * Get all the trades from the store.
  * @returns {Trade[]}
  */

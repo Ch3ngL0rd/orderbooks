@@ -1,7 +1,14 @@
 import { get, writable } from 'svelte/store';
 import { browser } from '$app/environment';
-import { addTrade } from './trades';
-
+import { addTrade, removeTrade, updateTrade } from './trades';
+import {
+    // JsonHubProtocol,
+    // HubConnectionState,
+    HttpTransportType,
+    HubConnectionBuilder,
+    LogLevel
+  } from '@microsoft/signalr';
+// import { json } from '@sveltejs/kit';
 /**
  * @typedef {Object} OrderEntry
  * @property {string} id - The unique ID of the order entry
@@ -20,6 +27,15 @@ import { addTrade } from './trades';
 //     "{bids:[],asks:[]}"
 // ) : { bids: [], asks: [] };
 
+const connection = new HubConnectionBuilder()
+  .withUrl("https://localhost:7221/market", {
+//   .withUrl("https://market-maker-prod.azurewebsites.net/market", {
+    skipNegotiation: true,
+    transport: HttpTransportType.WebSockets,
+  })
+  .configureLogging(LogLevel.Debug)
+  .build();
+
 const initialValue = browser ? JSON.parse(localStorage.getItem('orderbooks') || '{"bids":[], "asks":[]}') : { bids: [], asks: [] };
 
 export const orderbooks = writable(initialValue);
@@ -33,110 +49,14 @@ orderbooks.subscribe(value => {
  */
 export function addBid(bid) {
     console.log('addBid', bid);
-    let currentOrderbooks = get(orderbooks);
-
-    // Check if there are asks
-    if (currentOrderbooks.asks.length > 0) {
-        // Sort asks by price in ascending order, then by timestamp
-        let sortedAsks = currentOrderbooks.asks.sort((/** @type {{ price: number; timestamp: number; }} */ a, /** @type {{ price: number; timestamp: number; }} */ b) => a.price - b.price || a.timestamp - b.timestamp);
-
-        // Get the lowest ask
-        let lowestAsk = sortedAsks[0];
-
-        if (bid.price >= lowestAsk.price) {
-            // We have a match
-
-            // Add trades for both users
-            const currentTimestamp = Date.now();
-            const id = generateId();
-            addTrade({
-                id,
-                side: 'buy',
-                price: lowestAsk.price,
-                user: bid.user,
-                timestamp: currentTimestamp,
-                instigator: true
-            });
-            addTrade({
-                id,
-                side: 'sell',
-                price: lowestAsk.price,
-                user: lowestAsk.user,
-                timestamp: currentTimestamp,
-                instigator: false
-            });
-
-            // Remove the matched ask from the asks orderbook
-            currentOrderbooks.asks = currentOrderbooks.asks.filter((/** @type {{ id: string; }} */ ask) => ask.id !== lowestAsk.id);
-
-            // Update the orderbooks
-            orderbooks.set(currentOrderbooks);
-
-            // Exit the function since the bid was matched and shouldn't be added to the bid orderbook
-            return;
-        }
-    }
-
-    // If no match was found, add the bid to the bid orderbook
-    orderbooks.update(current => {
-        current.bids = [...current.bids, bid];
-        return current;
-    });
+    connection.invoke("PlaceOrder", "A", bid.price, 1).catch((err) => console.error(err.toString()));
 }
 /**
  * @param {OrderEntry} ask
  */
 export function addAsk(ask) {
     console.log('addAsk', ask);
-    let currentOrderbooks = get(orderbooks);
-
-    // Check if there are bids
-    if (currentOrderbooks.bids.length > 0) {
-        // Sort bids by price in descending order, then by timestamp
-        let sortedBids = currentOrderbooks.bids.sort((/** @type {{ price: number; timestamp: number; }} */ a, /** @type {{ price: number; timestamp: number; }} */ b) => b.price - a.price || a.timestamp - b.timestamp);
-
-        // Get the highest bid
-        let highestBid = sortedBids[0];
-
-        if (ask.price <= highestBid.price) {
-            // We have a match
-
-            // Add trades for both users
-            const currentTimestamp = Date.now();
-            const id = generateId();
-            addTrade({
-                id,
-                side: 'sell',
-                price: highestBid.price,
-                user: ask.user,
-                timestamp: currentTimestamp,
-                instigator: true
-            });
-            addTrade({
-                id,
-                side: 'buy',
-                price: highestBid.price,
-                user: highestBid.user,
-                timestamp: currentTimestamp,
-                instigator: false
-            });
-
-            // Remove the matched bid from the bids orderbook
-            currentOrderbooks.bids = currentOrderbooks.bids.filter((/** @type {{ id: string; }} */ bid) => bid.id !== highestBid.id);
-
-            // Update the orderbooks
-            orderbooks.set(currentOrderbooks);
-
-            // Exit the function since the ask was matched and shouldn't be added to the ask orderbook
-            return;
-        }
-    }
-
-    // If no match was found, add the ask to the ask orderbook
-    orderbooks.update(current => {
-        current.asks = [...current.asks, ask];
-        return current;
-    });
+    connection.invoke("PlaceOrder", "A", ask.price, -1).catch((err) => console.error(err.toString()));
 }
 
 /**
@@ -296,3 +216,93 @@ export function clearStorage() {
 function generateId() {
     return Math.random().toString(36).substr(2, 9);
 }
+
+/**
+ * @param {any} orderID
+ */
+function deleteOrder(orderID) {
+    // delete order 
+    orderbooks.update(current => {
+        current.bids = current.bids.filter((/** @type {{ id: string; }} */ bid) => bid.id !== orderID);
+        current.asks = current.asks.filter((/** @type {{ id: string; }} */ ask) => ask.id !== orderID);
+        return current;
+    });
+    return;
+}
+
+/**
+ * @param {{ id?: any; side: any; price?: number; user?: any; timestamp?: any; instigator?: boolean; }} order
+ */
+function addOrder(order) {
+    orderbooks.update(current => {
+        if (order.side == 'buy') {
+            current.bids = [...current.bids, order];
+        } else {
+            current.asks = [...current.asks, order];
+        }
+        return current;
+    });
+}
+
+async function start() {
+  try {
+    await connection.start();
+    console.log("SignalR Connected.");
+    connection.invoke("JoinMarket", "A");
+  } catch (err) {
+    console.log(err);
+    setTimeout(start, 5000);
+  }
+}
+
+connection.onclose(async () => {
+  await start();
+});
+
+connection.on("NewOrder", (order) => {
+    console.log("NewOrder")
+    console.log(get(orderbooks).bids)
+    console.log(get(orderbooks).asks)
+    var newOrder = {
+        id: order["id"],
+        side: order["quantity"] > 0 ? 'buy' : 'sell',
+        price: Math.abs(order["price"]),
+        user: order["user"],
+        timestamp: order["createdAt"],
+        instigator: false
+    };
+
+    addOrder(newOrder)
+
+
+  });
+
+  connection.on("OrderFilled", (order) => {
+    if (order["newQuantity"] == 0) {
+        removeTrade(order.id)
+        deleteOrder(order.id) 
+    } else {
+        var newOrder = {
+            id: order["id"],
+            side: order["quantity"] > 0 ? 'buy' : 'sell',
+            price: Math.abs(order["price"]),
+            user: order["user"],
+            timestamp: order["createdAt"],
+            instigator: false
+        };
+        updateTrade(newOrder.id, newOrder )
+        deleteOrder(order.id)
+        addOrder(newOrder)
+        
+    }
+  });
+
+connection.on("RecieveMessage", (message) => {
+    console.log(message);
+  });
+  console.log("Connecting...");
+
+start()
+// start().catch(console.error);
+
+export var signalRConnection = connection;

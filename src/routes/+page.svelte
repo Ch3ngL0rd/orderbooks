@@ -5,7 +5,7 @@
 
 <script>
 	import { addBid, addAsk, cancelOrder, buy, sell, cancelOrderAtPrice } from '$lib/orderbooks';
-	import { orderbooks } from '$lib/orderbooks';
+	import { orderbooks, signalRConnection } from '$lib/orderbooks';
 	import { get } from 'svelte/store';
 	import { getAllTradesByUser, groupTradesById, tradesStore } from '$lib/trades';
 	import { onDestroy, onMount } from 'svelte';
